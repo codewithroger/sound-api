@@ -11,8 +11,8 @@ UPLOAD_FOLDER = 'uploads'
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 # Load model and label encoder
-model = load_model('Sound_Classifier_CNN.h5')
-le = joblib.load('Sound_label.pkl')
+model = load_model('D:/sound_api_project/.venv/Sound_Classifier_CNN.h5')
+le = joblib.load('D:/sound_api_project/.venv/Sound_label.pkl')
 
 # Feature extraction
 def extract_features(file_name, target_size=195):
@@ -42,7 +42,17 @@ def extract_features(file_name, target_size=195):
         print(f"Feature extraction error: {e}")
         return None
 
-# Predict route
+# Get audio metadata
+def get_file_metadata(file_name):
+    try:
+        audio, sr = librosa.load(file_name, sr=None)
+        duration = librosa.get_duration(y=audio, sr=sr)
+        return {"duration_seconds": duration, "sample_rate": sr}
+    except Exception as e:
+        print(f"Metadata extraction error: {e}")
+        return {"error": str(e)}
+
+# Prediction route
 @app.route('/predict', methods=['POST'])
 def predict():
     if 'file' not in request.files:
@@ -59,11 +69,14 @@ def predict():
 
     input_data = features.reshape(1, features.shape[0], 1, 1)
     predictions = model.predict(input_data)
-    label = le.inverse_transform([np.argmax(predictions)])
+    predicted_label = le.inverse_transform(np.argmax(predictions, axis=1))[0]
+    class_probabilities = predictions.flatten().tolist()
+    metadata = get_file_metadata(file_path)
 
     return jsonify({
-        'predicted_label': label[0],
-        'class_probabilities': predictions.flatten().tolist()
+        "predicted_label": predicted_label,
+        "class_probabilities": class_probabilities,
+        "audio_metadata": metadata
     })
 
 if __name__ == '__main__':
