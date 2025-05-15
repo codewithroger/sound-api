@@ -1,6 +1,7 @@
-Flask
-gunicorn
+fastapi
+uvicorn
 tensorflow
 librosa
 joblib
+pydub
 numpy
