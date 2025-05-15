@@ -5,3 +5,4 @@ librosa
 joblib
 pydub
 numpy
+python-multipart
