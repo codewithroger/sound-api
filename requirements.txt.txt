@@ -1,5 +1,0 @@
-Flask
-tensorflow
-librosa
-joblib
-werkzeug
