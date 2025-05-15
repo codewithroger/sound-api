@@ -1,23 +1,27 @@
-from flask import Flask, request, jsonify
+from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi.responses import JSONResponse
 import os
 import numpy as np
 import librosa
 from tensorflow.keras.models import load_model
 import joblib
-from werkzeug.utils import secure_filename
+import shutil
+import uuid
+from pydub import AudioSegment
+import io
 
-app = Flask(__name__)
-UPLOAD_FOLDER = 'uploads'
+app = FastAPI()
+
+UPLOAD_FOLDER = "uploads"
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 # Load model and label encoder
-model = load_model('Sound_Classifier_CNN.h5')
-le = joblib.load('Sound_label.pkl')
+model = load_model("Sound_Classifier_CNN.h5")
+le = joblib.load("label_encoder.pkl")
 
-# Feature extraction
-def extract_features(file_name, target_size=195):
+def extract_features(file_path, target_size=195):
     try:
-        audio, sample_rate = librosa.load(file_name, sr=44100)
+        audio, sample_rate = librosa.load(file_path, sr=44100)
         mfccs = librosa.feature.mfcc(y=audio, sr=sample_rate, n_mfcc=40, fmax=8000)
         chroma = librosa.feature.chroma_stft(y=audio, sr=sample_rate)
         mel = librosa.feature.melspectrogram(y=audio, sr=sample_rate)
@@ -42,42 +46,49 @@ def extract_features(file_name, target_size=195):
         print(f"Feature extraction error: {e}")
         return None
 
-# Get audio metadata
-def get_file_metadata(file_name):
+def get_file_metadata(file_path):
     try:
-        audio, sr = librosa.load(file_name, sr=None)
+        audio, sr = librosa.load(file_path, sr=None)
         duration = librosa.get_duration(y=audio, sr=sr)
         return {"duration_seconds": duration, "sample_rate": sr}
     except Exception as e:
-        print(f"Metadata extraction error: {e}")
         return {"error": str(e)}
 
-# Prediction route
-@app.route('/predict', methods=['POST'])
-def predict():
-    if 'file' not in request.files:
-        return jsonify({'error': 'No file uploaded'}), 400
+@app.post("/predict")
+async def predict(file: UploadFile = File(...)):
+    temp_filename = f"{uuid.uuid4().hex}.wav"
+    file_path = os.path.join(UPLOAD_FOLDER, temp_filename)
 
-    file = request.files['file']
-    filename = secure_filename(file.filename)
-    file_path = os.path.join(UPLOAD_FOLDER, filename)
-    file.save(file_path)
+    try:
+        # Check file type and convert if necessary
+        if file.filename.endswith(".mp3"):
+            audio = AudioSegment.from_file(io.BytesIO(await file.read()), format="mp3")
+            audio.export(file_path, format="wav")
+        elif file.filename.endswith(".wav") or file.filename.endswith(".wave"):
+            with open(file_path, "wb") as buffer:
+                shutil.copyfileobj(file.file, buffer)
+        else:
+            raise HTTPException(status_code=400, detail="Unsupported file format. Only .wav and .mp3 are supported.")
 
-    features = extract_features(file_path)
-    if features is None:
-        return jsonify({'error': 'Could not extract features'}), 500
+        # Feature extraction
+        features = extract_features(file_path)
+        if features is None:
+            raise HTTPException(status_code=500, detail="Feature extraction failed")
 
-    input_data = features.reshape(1, features.shape[0], 1, 1)
-    predictions = model.predict(input_data)
-    predicted_label = le.inverse_transform(np.argmax(predictions, axis=1))[0]
-    class_probabilities = predictions.flatten().tolist()
-    metadata = get_file_metadata(file_path)
+        input_data = features.reshape(1, features.shape[0], 1, 1)
+        predictions = model.predict(input_data)
+        predicted_label = le.inverse_transform(np.argmax(predictions, axis=1))[0]
+        class_probabilities = predictions.flatten().tolist()
+        metadata = get_file_metadata(file_path)
 
-    return jsonify({
-        "predicted_label": predicted_label,
-        "class_probabilities": class_probabilities,
-        "audio_metadata": metadata
-    })
+        return {
+            "predicted_label": predicted_label,
+            "class_probabilities": class_probabilities,
+            "audio_metadata": metadata
+        }
 
-if __name__ == '__main__':
-    app.run(debug=True)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if os.path.exists(file_path):
+            os.remove(file_path)
