@@ -11,8 +11,8 @@ UPLOAD_FOLDER = 'uploads'
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 # Load model and label encoder
-model = load_model('D:/sound_api_project/.venv/Sound_Classifier_CNN.h5')
-le = joblib.load('D:/sound_api_project/.venv/Sound_label.pkl')
+model = load_model('Sound_Classifier_CNN.h5')
+le = joblib.load('Sound_label.pkl')
 
 # Feature extraction
 def extract_features(file_name, target_size=195):
