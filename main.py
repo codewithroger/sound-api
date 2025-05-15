@@ -1,5 +1,4 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException
-from fastapi.responses import JSONResponse
 import os
 import numpy as np
 import librosa
@@ -15,7 +14,7 @@ app = FastAPI()
 UPLOAD_FOLDER = "uploads"
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
-# Load model and label encoder
+# Load model and label encoder once at startup
 model = load_model("Sound_Classifier_CNN.h5")
 le = joblib.load("label_encoder.pkl")
 
@@ -36,12 +35,14 @@ def extract_features(file_path, target_size=195):
             np.mean(tonnetz.T, axis=0)
         ))
 
+        # Pad or truncate features to fixed length
         if len(features) < target_size:
             features = np.pad(features, (0, target_size - len(features)), 'constant')
         elif len(features) > target_size:
             features = features[:target_size]
 
         return features
+
     except Exception as e:
         print(f"Feature extraction error: {e}")
         return None
@@ -56,26 +57,36 @@ def get_file_metadata(file_path):
 
 @app.post("/predict")
 async def predict(file: UploadFile = File(...)):
+    # Generate unique temp filename
     temp_filename = f"{uuid.uuid4().hex}.wav"
     file_path = os.path.join(UPLOAD_FOLDER, temp_filename)
 
     try:
-        # Check file type and convert if necessary
-        if file.filename.endswith(".mp3"):
-            audio = AudioSegment.from_file(io.BytesIO(await file.read()), format="mp3")
+        # Read and save file depending on extension
+        filename_lower = file.filename.lower()
+        if filename_lower.endswith(".mp3"):
+            # Convert mp3 to wav using pydub
+            audio_data = await file.read()
+            audio = AudioSegment.from_file(io.BytesIO(audio_data), format="mp3")
             audio.export(file_path, format="wav")
-        elif file.filename.endswith(".wav") or file.filename.endswith(".wave"):
+
+        elif filename_lower.endswith(".wav") or filename_lower.endswith(".wave"):
+            # Save wav directly
             with open(file_path, "wb") as buffer:
                 shutil.copyfileobj(file.file, buffer)
+
         else:
             raise HTTPException(status_code=400, detail="Unsupported file format. Only .wav and .mp3 are supported.")
 
-        # Feature extraction
+        # Extract features
         features = extract_features(file_path)
         if features is None:
             raise HTTPException(status_code=500, detail="Feature extraction failed")
 
+        # Prepare input shape for the model
         input_data = features.reshape(1, features.shape[0], 1, 1)
+
+        # Predict
         predictions = model.predict(input_data)
         predicted_label = le.inverse_transform(np.argmax(predictions, axis=1))[0]
         class_probabilities = predictions.flatten().tolist()
@@ -88,7 +99,10 @@ async def predict(file: UploadFile = File(...)):
         }
 
     except Exception as e:
+        # Return error details as HTTPException for client
         raise HTTPException(status_code=500, detail=str(e))
+
     finally:
+        # Clean up temp file if exists
         if os.path.exists(file_path):
             os.remove(file_path)
