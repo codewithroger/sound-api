@@ -1,4 +1,4 @@
-app = "your-app-name"  # Replace this with your Fly.io app name
+app = "Sound"  # Replace this with your Fly.io app name
 
 kill_signal = "SIGINT"
 kill_timeout = 5
